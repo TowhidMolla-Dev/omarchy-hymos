@@ -1,0 +1,6 @@
+*.so
+*.swp
+*~
+.DS_Store
+.qmlls.ini
+.claude

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="flow" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7dcfff"/>
+      <stop offset="1" stop-color="#bb9af7"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="#1a1b26"/>
+  <!-- A precise mouse silhouette, opened into a pair of easing trails. -->
+  <path d="M414 198c-108 0-184 83-184 191v246c0 108 76 191 184 191s184-83 184-191V389c0-108-76-191-184-191Z"
+        fill="none" stroke="url(#flow)" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M414 264v74" fill="none" stroke="url(#flow)" stroke-width="30" stroke-linecap="round"/>
+  <path d="M598 430c91 0 111-92 202-92 43 0 70 23 96 54"
+        fill="none" stroke="url(#flow)" stroke-width="27" stroke-linecap="round"/>
+  <path d="M598 521c99 0 123 78 212 78 38 0 66-14 91-37"
+        fill="none" stroke="url(#flow)" stroke-width="27" stroke-linecap="round"/>
+</svg>
