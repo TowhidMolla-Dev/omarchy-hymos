@@ -82,6 +82,11 @@ about 20 seconds. After that it loads instantly.
   sudo pacman -S --needed base-devel
   ```
 
+The build only uses the system toolchain (`/usr/bin/g++`, `/usr/bin/pkg-config`
+and the `.pc` files under `/usr`) in an empty environment, so compiler flags,
+`PATH` or `PKG_CONFIG_PATH` overrides in your shell never reach the plugin that
+gets loaded into Hyprland.
+
 If the build fails, the bar icon turns red and the panel tells you why. The
 compiler output is in `~/.cache/hymos/build.log`.
 

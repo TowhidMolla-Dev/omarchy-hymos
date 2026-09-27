@@ -46,18 +46,31 @@ source_sum=$(cksum <"$source_file" | cut -d' ' -f1)
 plugin="$cache_root/${hypr_commit:-unknown}-$source_sum/hymos.so"
 
 if [[ ! -f $plugin ]]; then
-  for tool in g++ pkg-config; do
-    command -v "$tool" >/dev/null || { echo "Hymos needs $tool to build (sudo pacman -S base-devel)" >&2; exit 2; }
+  # The result is loaded into the compositor, so the build must not pick up
+  # anything from the user's environment: only the system toolchain by
+  # absolute path, only the system .pc files, and an otherwise empty
+  # environment (no CXXFLAGS, LDFLAGS, CPATH, GCC_EXEC_PREFIX, LD_PRELOAD,
+  # PKG_CONFIG_PATH, ...).
+  cxx=/usr/bin/g++
+  pkgconf=/usr/bin/pkg-config
+  for tool in "$cxx" "$pkgconf"; do
+    [[ -x $tool ]] || { echo "Hymos needs $tool to build (install base-devel)" >&2; exit 2; }
   done
-  pkg-config --exists hyprland || { echo "Hymos needs the Hyprland headers (hyprland.pc not found)" >&2; exit 2; }
+  build_env=(/usr/bin/env -i PATH=/usr/bin LC_ALL=C
+    PKG_CONFIG_LIBDIR=/usr/lib/pkgconfig:/usr/share/pkgconfig)
+  "${build_env[@]}" "$pkgconf" --exists hyprland || { echo "Hymos needs the Hyprland headers (hyprland.pc not found)" >&2; exit 2; }
+  if ! cflags=$("${build_env[@]}" "$pkgconf" --cflags pixman-1 libdrm hyprland pangocairo libinput libudev wayland-server xkbcommon); then
+    echo "Hymos is missing build dependencies (pkg-config failed)" >&2
+    exit 2
+  fi
 
   mkdir -p "$(dirname "$plugin")"
   rm -f "$(dirname "$plugin")"/.hymos.* # leftovers from a build that was killed
   tmp=$(mktemp "$(dirname "$plugin")/.hymos.XXXXXX")
   trap 'rm -f "$tmp"' EXIT
-  # shellcheck disable=SC2046
-  if ! g++ -shared -fPIC --no-gnu-unique -O2 -std=c++2b "$source_file" -o "$tmp" \
-    $(pkg-config --cflags pixman-1 libdrm hyprland pangocairo libinput libudev wayland-server xkbcommon) 2>"$cache_root/build.log"; then
+  # shellcheck disable=SC2086
+  if ! "${build_env[@]}" "$cxx" -shared -fPIC --no-gnu-unique -O2 -std=c++2b "$source_file" -o "$tmp" \
+    $cflags 2>"$cache_root/build.log"; then
     echo "Hymos failed to build, see $cache_root/build.log" >&2
     exit 3
   fi
