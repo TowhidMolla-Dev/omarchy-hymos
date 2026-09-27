@@ -24,6 +24,8 @@ Panel {
     readonly property color  barForeground: bar ? bar.barForeground : Color.foreground
     readonly property color  dim: Qt.darker(foreground, 1.55)
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+    // the Hymos mark's gradient, as in assets/hymos-icon.svg
+    readonly property var brandGradient: ["#3de8ff", "#7d8cff", "#c47dff"]
 
     // last hymos-apply.sh failure, shown in the popup; empty when all is well
     property string error: ""
@@ -141,7 +143,7 @@ Panel {
                     iconOpacity: root.enabled ? 1.0 : 0.45
 
                     iconComponent: Component {
-                        Logo { size: Style.font.display * 1.25; weight: 44; color: root.foreground }
+                        Logo { size: Style.font.display * 1.25; weight: 44; gradient: root.brandGradient }
                     }
 
                     trailingControl: Component {
