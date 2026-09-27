@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "diogocezar.hymos",
   "name": "Hymos",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "diogocezar",
   "license": "MIT",
   "description": "Smooth, eased scrolling for your mouse wheel in every app on Hyprland, like Mos on macOS. Turn it on and tune how far and how long each scroll glides from one icon in the Omarchy bar.",

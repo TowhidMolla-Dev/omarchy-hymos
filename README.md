@@ -184,11 +184,17 @@ by hand too:
 enabled = 1
 step = 4          # intensity: pixels per wheel unit (1–12 in the panel)
 duration = 320    # glide: ms until the scroll settles
-exclude = ^(steam_app_.*|gamescope|.*[Rr]etro[Aa]rch.*)$   # window classes kept discrete
+exclude = steam_app_*, gamescope, *[Rr]etro[Aa]rch*   # window classes kept discrete
 ```
 
+`exclude` is a comma-separated list of globs matched against the whole window
+class: `*` matches any run of characters, `?` any single one and `[abc]` or
+`[a-z]` one of a set. It is deliberately not a regex: the match runs on every
+wheel event inside Hyprland, and a glob always finishes in time proportional
+to the class and pattern lengths.
+
 Since the plugin runs inside Hyprland, it only accepts `step` from 0.1 to 100,
-`duration` from 10 to 10000 and an `exclude` pattern up to 512 characters, and
+`duration` from 10 to 10000 and an `exclude` list up to 512 characters, and
 only reads the file if it is a regular file under 64 KiB. `hyprctl hymos
 reload` reports anything it rejects: a bad value falls back to its default, a
 bad file keeps the current settings.
@@ -227,7 +233,7 @@ hyprctl hymos
 ```
 
 Also check that no modifier key is held, and that the window isn't matched by
-the `exclude` pattern in `~/.config/hypr/hymos.conf`.
+the `exclude` list in `~/.config/hypr/hymos.conf`.
 </details>
 
 <details>
@@ -237,7 +243,7 @@ Add its window class (from `hyprctl activewindow`) to `exclude` in
 `~/.config/hypr/hymos.conf`, then run `hyprctl hymos reload`. For example:
 
 ```ini
-exclude = ^(steam_app_.*|gamescope|.*[Rr]etro[Aa]rch.*|blender)$
+exclude = steam_app_*, gamescope, *[Rr]etro[Aa]rch*, blender
 ```
 </details>
 
