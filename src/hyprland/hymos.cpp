@@ -275,7 +275,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_axisListener = Event::bus()->m_events.input.mouse.axis.listen([](IPointer::SAxisEvent e, Event::SCallbackInfo& info) { onAxis(e, info); });
     g_ctlCommand   = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "hymos", .exact = false, .fn = ctl});
 
-    return {"hymos", "Mos-style smooth scrolling for mouse wheels", "diogocezar", "1.0.0"};
+    return {"hymos", "Mos-style smooth scrolling for mouse wheels", "diogocezar", "1.0.1"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
