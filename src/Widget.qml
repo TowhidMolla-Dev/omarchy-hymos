@@ -38,15 +38,17 @@ Panel {
         if (root.bar && root.bar.shell) root.bar.shell.updateEntryInline(root.moduleName, updated);
     }
 
+    // stderr is capped before it reaches the collector (the panel shows it)
     Process {
         id: applyProc
-        stderr: StdioCollector { id: applyErr }
+        stdout: StdioCollector { id: applyErr }
         onExited: function (code) { root.error = code === 0 ? "" : (applyErr.text.trim() || ("exit " + code)) }
     }
 
     function apply() {
         if (applyProc.running) { applyDebounce.restart(); return; }
-        applyProc.command = ["bash", localPath("hymos-apply.sh"),
+        applyProc.command = ["bash", "-c", 'bash "$0" "$@" 2>&1 >/dev/null | head -c 4096; exit "${PIPESTATUS[0]}"',
+            localPath("hymos-apply.sh"),
             "--enabled", root.enabled ? "1" : "0",
             "--step", String(root.step),
             "--duration", String(root.duration)];

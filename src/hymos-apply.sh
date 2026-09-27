@@ -19,10 +19,17 @@ cache_root="${XDG_CACHE_HOME:-$HOME/.cache}/hymos"
 declare -A set=()
 while (($#)); do
   case "$1" in
-    --enabled | --step | --duration) set[${1#--}]="$2"; shift 2 ;;
+    --enabled | --step | --duration) (($# >= 2)) || { echo "missing value for $1" >&2; exit 1; }
+      set[${1#--}]="$2"; shift 2 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
 done
+
+# values end up in the config file (and in sed), so only plain in-range integers
+in_range() { [[ $1 =~ ^[0-9]{1,5}$ ]] && ((10#$1 >= $2 && 10#$1 <= $3)); }
+[[ -v set[enabled] ]] && ! in_range "${set[enabled]}" 0 1 && { echo "invalid --enabled: ${set[enabled]:0:32}" >&2; exit 1; }
+[[ -v set[step] ]] && ! in_range "${set[step]}" 1 12 && { echo "invalid --step: ${set[step]:0:32}" >&2; exit 1; }
+[[ -v set[duration] ]] && ! in_range "${set[duration]}" 80 900 && { echo "invalid --duration: ${set[duration]:0:32}" >&2; exit 1; }
 
 mkdir -p "$cache_root"
 # one bar per monitor calls this at once; serialize so we build and load once
@@ -42,7 +49,8 @@ done
 
 # --- build ------------------------------------------------------------------
 hypr_commit=$(hyprctl version -j | sed -n 's/.*"commit": *"\([0-9a-f]*\)".*/\1/p' | head -1)
-source_sum=$(cksum <"$source_file" | cut -d' ' -f1)
+# the build recipe (this script) is part of the key, so a changed recipe rebuilds
+source_sum=$(cat "$source_file" "$0" | cksum | cut -d' ' -f1)
 plugin="$cache_root/${hypr_commit:-unknown}-$source_sum/hymos.so"
 
 if [[ ! -f $plugin ]]; then

@@ -131,6 +131,12 @@ duration = 320    # glide: ms until the scroll settles
 exclude = ^(steam_app_.*|gamescope|.*[Rr]etro[Aa]rch.*)$   # window classes kept discrete
 ```
 
+Since the plugin runs inside Hyprland, it only accepts `step` from 0.1 to 100,
+`duration` from 10 to 10000 and an `exclude` pattern up to 512 characters, and
+only reads the file if it is a regular file under 64 KiB. `hyprctl hymos
+reload` reports anything it rejects: a bad value falls back to its default, a
+bad file keeps the current settings.
+
 ```bash
 hyprctl hymos             # show the current settings
 hyprctl hymos reload      # re-read the config file

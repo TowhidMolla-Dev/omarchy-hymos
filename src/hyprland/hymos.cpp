@@ -14,10 +14,12 @@
 #include <hyprland/src/desktop/state/ViewHitTester.hpp>
 #include <hyprland/src/desktop/view/Window.hpp>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <regex>
 #include <sstream>
@@ -50,6 +52,17 @@ namespace {
 
     constexpr auto TICK = std::chrono::microseconds(4000); // ~250Hz
 
+    // This code runs inside the compositor, so every input is bounded: the
+    // config file, the values it holds, the exclude pattern and the window
+    // class it is matched against (which any client can set).
+    constexpr std::uintmax_t MAX_CONFIG_BYTES  = 64 * 1024;
+    constexpr size_t         MAX_EXCLUDE_CHARS = 512;
+    constexpr size_t         MAX_CLASS_CHARS   = 256;
+    constexpr size_t         MAX_ERROR_CHARS   = 64;
+    constexpr double         MIN_STEP = 0.1, MAX_STEP = 100.0;
+    constexpr double         MIN_DURATION = 10.0, MAX_DURATION = 10000.0;
+    constexpr double         MAX_REMAINING = 100000.0; // px still to glide, per axis
+
     std::string configPath() {
         const char* xdg  = std::getenv("XDG_CONFIG_HOME");
         const char* home = std::getenv("HOME");
@@ -65,12 +78,34 @@ namespace {
         return s.substr(b, e - b + 1);
     }
 
+    std::string clip(const std::string& s, size_t max) {
+        return s.size() <= max ? s : s.substr(0, max) + "...";
+    }
+
+    // finite and within [lo, hi], or throws like std::stod does on bad input
+    double parseNumber(const std::string& val, double lo, double hi) {
+        const double v = std::stod(val);
+        if (!std::isfinite(v) || v < lo || v > hi)
+            throw std::out_of_range("range");
+        return v;
+    }
+
     // Config file format: `key = value` lines, `#` comments. Missing file keeps defaults.
     std::string loadConfig() {
-        SConfig       cfg;
-        std::ifstream file(configPath());
-        std::string   line, errors;
+        SConfig     cfg;
+        std::string line, errors;
 
+        // only a small regular file: a FIFO or device here would block the compositor
+        const auto      path = configPath();
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) {
+            g_config = std::move(cfg);
+            return "";
+        }
+        if (!std::filesystem::is_regular_file(path, ec) || std::filesystem::file_size(path, ec) > MAX_CONFIG_BYTES || ec)
+            return "config is not a regular file under 64 KiB, keeping the current settings\n";
+
+        std::ifstream file(path);
         while (std::getline(file, line)) {
             line = trim(line.substr(0, line.find('#')));
             const auto eq = line.find('=');
@@ -83,15 +118,17 @@ namespace {
                 if (key == "enabled")
                     cfg.enabled = val == "1" || val == "true" || val == "yes";
                 else if (key == "step")
-                    cfg.step = std::stod(val);
+                    cfg.step = parseNumber(val, MIN_STEP, MAX_STEP);
                 else if (key == "duration")
-                    cfg.durationMs = std::max(1.0, std::stod(val));
+                    cfg.durationMs = parseNumber(val, MIN_DURATION, MAX_DURATION);
                 else if (key == "exclude") {
-                    cfg.exclude   = val;
+                    if (val.size() > MAX_EXCLUDE_CHARS)
+                        throw std::length_error("exclude");
                     cfg.excludeRe = std::regex(val);
+                    cfg.exclude   = val;
                 } else
-                    errors += "unknown key: " + key + "\n";
-            } catch (const std::exception& e) { errors += "bad value for " + key + ": " + val + "\n"; }
+                    errors += "unknown key: " + clip(key, MAX_ERROR_CHARS) + "\n";
+            } catch (const std::exception& e) { errors += "bad value for " + clip(key, MAX_ERROR_CHARS) + ": " + clip(val, MAX_ERROR_CHARS) + "\n"; }
         }
 
         g_config = std::move(cfg);
@@ -159,7 +196,11 @@ namespace {
         if (!g_config.exclude.empty()) {
             const auto PWINDOW = Desktop::viewState()->hitTest().windowAt(g_pInputManager->getMouseCoordsInternal(),
                                                                           Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
-            if (PWINDOW && (std::regex_search(PWINDOW->m_class, g_config.excludeRe) || std::regex_search(PWINDOW->m_initialClass, g_config.excludeRe)))
+            // std::regex recurses per character, so a huge class from a client could overflow the stack
+            const auto excluded = [](const std::string& cls) {
+                return std::regex_search(cls.size() <= MAX_CLASS_CHARS ? cls : cls.substr(0, MAX_CLASS_CHARS), g_config.excludeRe);
+            };
+            if (PWINDOW && (excluded(PWINDOW->m_class) || excluded(PWINDOW->m_initialClass)))
                 return true;
         }
 
@@ -181,7 +222,7 @@ namespace {
         if (ax.active && std::signbit(ax.remaining) != std::signbit(add))
             ax.remaining = 0;
 
-        ax.remaining += add;
+        ax.remaining = std::clamp(ax.remaining + add, -MAX_REMAINING, MAX_REMAINING);
         ax.mouse = e.mouse;
 
         if (!ax.active) {
