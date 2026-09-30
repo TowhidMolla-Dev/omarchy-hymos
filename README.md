@@ -381,6 +381,11 @@ and back in fixes it.
 
 ## Credits
 
+Hymos is originally by [diogocezar](https://github.com/diogocezar) — see
+[diogocezar/omarchy-hymos](https://github.com/diogocezar/omarchy-hymos). This
+repository is a fork of that project, and the original work and its MIT licence
+are preserved. Changes here are our own.
+
 Inspired by [Mos](https://github.com/Caldis/Mos) by Caldis, the smooth
 scrolling utility that makes mouse wheels a joy on macOS. Hymos is an
 independent project and isn't affiliated with Mos or Hyprland.
