@@ -1148,7 +1148,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_moveListener    = Event::bus()->m_events.input.mouse.move.listen([](Vector2D d, Event::SCallbackInfo& info) { onMove(d, info); });
     g_ctlCommand      = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "hymos", .exact = false, .fn = ctl});
 
-    return {"hymos", "Mos-style smooth scrolling for mouse wheels, plus phone-like grab-and-drag", "diogocezar", "1.3.1"};
+    return {"hymos", "Mos-style smooth scrolling for mouse wheels, plus phone-like grab-and-drag", "TowhidMolla-Dev", "1.4.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {

@@ -11,8 +11,8 @@ import qs.Ui
 // a reboot.
 Panel {
     id: root
-    moduleName: "diogocezar.hymos"  // must match manifest id
-    ipcTarget: "diogocezar.hymos"
+    moduleName: "io.github.TowhidMolla-Dev.omarchy-hymos"  // must match manifest id
+    ipcTarget: "io.github.TowhidMolla-Dev.omarchy-hymos"
 
     readonly property bool   enabled: setting("enabled", true)
     readonly property int    step: setting("step", 4)
@@ -151,7 +151,11 @@ Panel {
         open: root.opened
         focusTarget: keyCatcher
         contentWidth: panel.fittedContentWidth(Style.space(340))
-        contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(660))
+        // The panel is never taller than this, so the page area below the hero
+        // and tabs has to fit inside it. maxPanelHeight is shared with the
+        // Flickable so the two can never disagree about how much room is left.
+        readonly property int maxPanelHeight: Style.space(660)
+        contentHeight: panel.fittedContentHeight(column.implicitHeight, maxPanelHeight)
 
         PanelKeyCatcher {
             id: keyCatcher
@@ -177,6 +181,7 @@ Panel {
                 spacing: Style.space(12)
 
                 PanelHero {
+                    id: hero
                     width: parent.width
                     title: "Hymos"
                     meta: Strings.t(root.enabled ? "on" : "off")
@@ -198,6 +203,7 @@ Panel {
                 }
 
                 Text {
+                    id: errorText
                     visible: root.error !== ""
                     width: parent.width
                     textFormat: Text.PlainText
@@ -208,7 +214,7 @@ Panel {
                     wrapMode: Text.WordWrap
                 }
 
-                PanelSeparator { width: parent.width; foreground: root.foreground }
+                PanelSeparator { id: separator; width: parent.width; foreground: root.foreground }
 
                 ButtonGroup {
                     id: tabStrip
@@ -224,16 +230,56 @@ Panel {
 
                 // Only the visible page is instantiated, so the drag controls
                 // cost nothing until the tab is actually opened.
-                Loader {
-                    id: page
+                //
+                // Wrapped in a Flickable because the drag page is taller than the
+                // panel's height cap: without this the controls below the fold
+                // (speed, fling, coast) simply could not be reached. The wheel
+                // and hero stay outside it, so they never scroll away.
+                Flickable {
+                    id: pageScroll
                     width: parent.width
-                    sourceComponent: root.tab === "drag" ? dragPage : wheelPage
+                    // Grow to the content, but never past the room the panel
+                    // has left under the hero and the tab strip.
+                    //
+                    // The cap comes from availableCardHeight, which is derived
+                    // from the screen, rather than from panel.contentHeight:
+                    // that one is fitted to column.implicitHeight, so measuring
+                    // against it would feed this item's height back into its own
+                    // height and form a binding loop.
+                    height: Math.min(contentHeight, maxScrollableHeight)
+                    contentWidth: width
+                    // Loader's own implicitHeight follows the loaded item, but
+                    // reading it through `page.item` keeps this correct for any
+                    // page that sizes itself from its children.
+                    contentHeight: page.item ? page.item.implicitHeight : 0
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    // Only take wheel events when there is something below the
+                    // fold; otherwise a short page swallows the scroll.
+                    interactive: contentHeight > height
+                    // Switching tabs must not leave the next page scrolled.
+                    onContentHeightChanged: if (contentY > maximumY) contentY = 0
+                    onHeightChanged: if (contentY > maximumY) contentY = 0
+
+                    // Ceiling is min(the panel's own cap, the screen's room) minus
+                    // the inset and the chrome above. Using the panel's cap as well
+                    // matters: availableCardHeight alone is far larger than 660, so
+                    // relying on it would size the page area past what the panel
+                    // actually shows and clip it again.
+                    readonly property real maxScrollableHeight: Math.max(0, Math.min(panel.maxPanelHeight, panel.availableCardHeight) - panel.verticalContentInset - chromeHeight)
+                    readonly property real chromeHeight: hero.implicitHeight + separator.height + tabStrip.height + Style.space(12) * 4
+
+                    Loader {
+                        id: page
+                        width: pageScroll.width
+                        sourceComponent: root.tab === "drag" ? dragPage : wheelPage
+                    }
                 }
 
                 Component {
                     id: wheelPage
                     Column {
-                        width: page.width
+                        width: pageScroll.width
                         spacing: Style.space(12)
 
                         SliderRow {
@@ -290,7 +336,7 @@ Panel {
                 Component {
                     id: dragPage
                     Column {
-                        width: page.width
+                        width: pageScroll.width
                         spacing: Style.space(12)
 
                         Toggle {
