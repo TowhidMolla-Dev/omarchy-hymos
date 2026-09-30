@@ -50,6 +50,10 @@ with nothing to set up per app. *Hyprland + Mos = Hymos.*
 | ⌨️ **Binds keep working** | With **Super / Ctrl / Alt** held the wheel stays in steps, so `Super + wheel` still switches workspaces. |
 | 🎮 **Games left alone** | Steam games, gamescope and RetroArch get the normal stepped wheel, so weapon switching behaves. |
 | 🖐️ **Trackpads untouched** | Only real mouse wheels are smoothed; touchpads already scroll smoothly. |
+| 🖱️ **Drag to scroll** | Hold a button and move the mouse to scroll like a touchpad, with an optional fling. Off by default; set which button, how far it moves and whether it flings. |
+| 📐 **Per-app profiles** | Override intensity, glide or drag for a window class, so a browser and a game can feel different. |
+| 🌊 **Three curves** | **expo**, **linear** or **smooth**, each covering the same distance over the same time. |
+| ↔️ **Axis lock** | A diagonal drag commits to one axis instead of stuttering across both. |
 | 🔁 **Zero setup** | The Hyprland plugin is compiled for *your* Hyprland on first start, cached, and loaded every time the shell starts. Hyprland updated? Hymos rebuilds itself. |
 | 🌍 **Multilingual** | English, Português, Español, Français and Deutsch, following your system locale. |
 
@@ -184,8 +188,120 @@ by hand too:
 enabled = 1
 step = 4          # intensity: pixels per wheel unit (1–12 in the panel)
 duration = 320    # glide: ms until the scroll settles
+curve = expo      # expo | linear | smooth: how a glide spends its distance
 exclude = steam_app_*, gamescope, *[Rr]etro[Aa]rch*   # window classes kept discrete
+
+# drag to scroll (this plugin's addition, not upstream)
+drag_scroll = 1          # 0 = off, 1 = on
+drag_button = right      # left | middle | right
+drag_threshold = 4       # px of movement before it counts as a scroll, not a click
+drag_ratio = -1.0        # px scrolled per px moved; negative = mobile, positive = grab-and-pull
+drag_fling = 1           # keep gliding when you let go
+drag_fling_tau = 380     # ms; decay time of that glide, so a flick carries further
+drag_fling_min_speed = 0.25  # px/ms you must be moving at to coast at all
+drag_fling_max_speed = 4.0   # px/ms ceiling, so a hard flick cannot launch the page
+axis_lock = 1        # a drag sticks to the axis it started on
+drag_click_suppress = 1   # hold the press back, so a drag never opens a menu
 ```
+
+### Per-application profiles
+
+`~/.config/hypr/hymos-profiles.conf` overrides any of those per window class,
+which is how you get one feel in a browser and another in a game. Every setting
+is optional; a profile only lists what it changes, and the first matching glob
+wins:
+
+```ini
+[profile *chrome*]
+step = 4
+duration = 300
+
+[profile steam_app_*]
+enabled = 0
+
+[profile *code*]
+drag_scroll = 0
+```
+
+The glob is matched against the window class, with `*` for any run of
+characters, `?` for one, and `[abc]` / `[a-z]` for a set. With the cursor over
+a window, `hyprctl hymos profile` reports which one matched and what it
+resolved to, so a typo in the glob is easy to spot. Profiles live in their own
+file because the widget rewrites `hymos.conf` in place.
+
+### Scroll curve
+
+All three curves travel the same total distance over `duration`; only the shape
+differs:
+
+- **expo** (default) front-loads the movement, then tails off. Snappy, and the
+  long tail is what keeps fast scrolling from stopping dead.
+- **linear** moves at a constant speed and then stops. Predictable, with nothing
+  left over afterwards.
+- **smooth** ramps up, runs fast through the middle, and eases into a stop. The
+  gentlest of the three.
+
+A drag's inertia always uses an exponential coast of its own, because that is
+what a flick feels like, so the curve applies to the wheel.
+
+### Axis lock
+
+A slightly diagonal drag used to split its distance across both axes, which reads
+as a stutter. With `axis_lock = 1` the axis the gesture mostly moved along is
+claimed once, when the drag starts, and the other component is dropped. Set it
+to `0` to get both axes again.
+
+### Drag to scroll
+
+Hold `drag_button` and move the mouse: the page follows the cursor 1:1, and
+letting go while still moving throws it on with inertia, the way a flick coasts
+on a touchscreen. It runs inside Hyprland, so it works in every app and needs no
+extra permissions.
+
+`drag_ratio` is how far the page moves per pixel of mouse movement. Its **sign
+sets the direction** and its **size sets the speed**:
+
+- **Negative (the default)** is the mobile feel. Push the cursor up and the page
+  advances, the way it does under a finger on a touchscreen. `-1.0` is 1:1.
+- **Positive** is grab-and-pull, where the content sticks to the cursor and
+  trails behind it. Useful when you want to hold a page still and rake it around.
+
+So `-2.0` is twice as fast as `-1.0`, and `2.0` is the same speed as `-2.0` in
+the opposite direction.
+
+`drag_threshold` is the distance the mouse has to travel before the gesture
+becomes a scroll. Everything under it stays a normal click, which is why
+clicking a link or opening a right-click menu is unaffected.
+
+The glide is meant to feel like a phone, and that takes three knobs:
+
+- `drag_fling_tau` is the decay time of the coast. A flick at speed `v` travels
+  about `v * tau`, so `380` (the default) carries a normal flick noticeably
+  further than a short one; raise it for a long lazy throw, lower it for a
+  short crisp one. It is deliberately independent of `duration`, which only
+  governs the wheel, so tuning wheel smoothness does not change how a flick
+  feels.
+- `drag_fling_min_speed` is the speed you have to be moving at when you let go.
+  Park the pointer for a moment before releasing and it coasts nothing, just as
+  a finger that comes to rest before it leaves the glass does.
+- `drag_fling_max_speed` caps the flick, so one violent throw cannot send the
+  page flying.
+
+The speed is averaged over a short window rather than read off the last mouse
+event, because a single sample is far too noisy to set a coast from, and the
+coast stops as soon as it has slowed to a crawl instead of riding out the
+exponential tail.
+
+One tradeoff is deliberate: neither the press nor the release is cancelled,
+because the compositor cannot take an event back once it has been sent, and
+swallowing the release left Hyprland's own button bookkeeping out of step with
+the device, after which every other button stopped working. The consequence is
+that an app can see a click at the end of a drag, so a drag that ends over a
+text area may open a context menu. Only the *motion* past the threshold is taken
+from the app, so text selection, sliders and window dragging are unaffected.
+
+`Super` / `Ctrl` / `Alt` held, and windows on the `exclude` list, are left
+alone, same as the wheel.
 
 `exclude` is a comma-separated list of globs matched against the whole window
 class: `*` matches any run of characters, `?` any single one and `[abc]` or
@@ -203,6 +319,12 @@ bad file keeps the current settings.
 hyprctl hymos             # show the current settings
 hyprctl hymos reload      # re-read the config file
 hyprctl hymos toggle      # also: on | off
+hyprctl hymos drag        # show the drag state
+hyprctl hymos drag on     # also: off | toggle
+hyprctl hymos profile     # which profile the window under the cursor matched
+hyprctl hymos curve smooth # also: expo | linear | toggle
+hyprctl hymos axislock on  # also: off | toggle
+hyprctl hymos clicksuppress off  # escape hatch: let drags click and open menus
 ```
 
 ## Troubleshooting

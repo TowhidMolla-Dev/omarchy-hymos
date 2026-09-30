@@ -17,8 +17,27 @@ Panel {
     readonly property bool   enabled: setting("enabled", true)
     readonly property int    step: setting("step", 4)
     readonly property int    duration: setting("duration", 320)
+    readonly property string curve: setting("curve", "expo")
+    readonly property bool   axisLock: setting("axis_lock", true)
     readonly property string language: setting("language", "auto")
     onLanguageChanged: Strings.language = language
+
+    // Drag-to-scroll. The plugin consumes a single signed ratio, so direction
+    // and speed are two knobs on this side and one derived value on the way out.
+    readonly property bool   dragEnabled: setting("drag_scroll", true)
+    readonly property string dragButton: setting("drag_button", "right")
+    readonly property string dragDirection: setting("drag_direction", "mobile")
+    readonly property int    dragSpeed: setting("drag_speed", 100)
+    readonly property bool   clickSuppress: setting("drag_click_suppress", true)
+    readonly property bool   dragFling: setting("drag_fling", true)
+    readonly property int    dragCoast: setting("drag_fling_tau", 380)
+    readonly property real   dragRatio: (dragDirection === "laptop" ? 1 : -1) * (dragSpeed / 100)
+
+    // Which control page the popup shows. Navigation, not configuration, so it
+    // deliberately stays out of the settings store.
+    property string tab: "wheel"
+
+    function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
 
     readonly property color  foreground: bar ? bar.foreground : Color.foreground
     readonly property color  barForeground: bar ? bar.barForeground : Color.foreground
@@ -53,7 +72,15 @@ Panel {
             localPath("hymos-apply.sh"),
             "--enabled", root.enabled ? "1" : "0",
             "--step", String(root.step),
-            "--duration", String(root.duration)];
+            "--duration", String(root.duration),
+            "--curve", root.curve,
+            "--axis-lock", root.axisLock ? "1" : "0",
+            "--drag-scroll", root.dragEnabled ? "1" : "0",
+            "--drag-button", root.dragButton,
+            "--drag-ratio", root.dragRatio.toFixed(2),
+            "--drag-fling", root.dragFling ? "1" : "0",
+            "--drag-fling-tau", String(root.dragCoast),
+            "--drag-click-suppress", root.clickSuppress ? "1" : "0"];
         applyProc.running = true;
     }
 
@@ -62,6 +89,15 @@ Panel {
     onEnabledChanged: applyDebounce.restart()
     onStepChanged: applyDebounce.restart()
     onDurationChanged: applyDebounce.restart()
+    onCurveChanged: applyDebounce.restart()
+    onAxisLockChanged: applyDebounce.restart()
+    onDragEnabledChanged: applyDebounce.restart()
+    onDragButtonChanged: applyDebounce.restart()
+    onDragDirectionChanged: applyDebounce.restart()
+    onDragSpeedChanged: applyDebounce.restart()
+    onDragFlingChanged: applyDebounce.restart()
+    onClickSuppressChanged: applyDebounce.restart()
+    onDragCoastChanged: applyDebounce.restart()
     Component.onCompleted: {
         Strings.language = language;
         applyDebounce.restart();
@@ -115,7 +151,7 @@ Panel {
         open: root.opened
         focusTarget: keyCatcher
         contentWidth: panel.fittedContentWidth(Style.space(340))
-        contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(520))
+        contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(660))
 
         PanelKeyCatcher {
             id: keyCatcher
@@ -123,10 +159,16 @@ Panel {
 
             onCloseRequested: root.close()
             onTabRequested: function (direction) { root.switchPanel(direction) }
-            // ←/→ nudge intensity, ↑/↓ nudge glide
+            // ←/→ nudge the horizontal knob, ↑/↓ the vertical one, for
+            // whichever page is showing so the keys never edit a hidden tab.
             onMoveRequested: function (dx, dy) {
-                if (dx !== 0) root.writeSettings({step: Math.max(1, Math.min(12, root.step + dx))});
-                if (dy !== 0) root.writeSettings({duration: Math.max(80, Math.min(900, root.duration - dy * 40))});
+                if (root.tab === "drag") {
+                    if (dx !== 0) root.writeSettings({drag_speed: root.clamp(root.dragSpeed + dx * 5, 0, 100)});
+                    if (dy !== 0) root.writeSettings({drag_fling_tau: root.clamp(root.dragCoast - dy * 10, 150, 900)});
+                } else {
+                    if (dx !== 0) root.writeSettings({step: root.clamp(root.step + dx, 1, 12)});
+                    if (dy !== 0) root.writeSettings({duration: root.clamp(root.duration - dy * 40, 80, 900)});
+                }
             }
 
             Column {
@@ -168,53 +210,239 @@ Panel {
 
                 PanelSeparator { width: parent.width; foreground: root.foreground }
 
-                SliderRow {
+                ButtonGroup {
+                    id: tabStrip
                     width: parent.width
-                    title: Strings.t("intensity").toUpperCase()
-                    valueText: root.intensityLabel(intensity.liveValue) + " · " + Math.round(intensity.liveValue)
-                    hint: Strings.t("intensityHint")
+                    focusable: false
+                    options: [
+                        { value: "wheel", label: Strings.t("tabWheel") },
+                        { value: "drag", label: Strings.t("tabDrag") }
+                    ]
+                    value: root.tab
+                    onChanged: function (value) { root.tab = value }
+                }
 
-                    PanelSlider {
-                        id: intensity
-                        bar: root.bar
-                        width: parent.width
-                        minimum: 1
-                        maximum: 12
-                        step: 1
-                        integer: true
-                        value: root.step
-                        onReleased: function (v) { root.writeSettings({step: Math.round(v)}) }
+                // Only the visible page is instantiated, so the drag controls
+                // cost nothing until the tab is actually opened.
+                Loader {
+                    id: page
+                    width: parent.width
+                    sourceComponent: root.tab === "drag" ? dragPage : wheelPage
+                }
+
+                Component {
+                    id: wheelPage
+                    Column {
+                        width: page.width
+                        spacing: Style.space(12)
+
+                        SliderRow {
+                            width: parent.width
+                            title: Strings.t("intensity").toUpperCase()
+                            valueText: root.intensityLabel(intensity.liveValue) + " · " + Math.round(intensity.liveValue)
+                            hint: Strings.t("intensityHint")
+
+                            PanelSlider {
+                                id: intensity
+                                bar: root.bar
+                                width: parent.width
+                                minimum: 1
+                                maximum: 12
+                                step: 1
+                                integer: true
+                                value: root.step
+                                onReleased: function (v) { root.writeSettings({step: Math.round(v)}) }
+                            }
+                        }
+
+                        SliderRow {
+                            width: parent.width
+                            title: Strings.t("glide").toUpperCase()
+                            valueText: root.glideLabel(glide.liveValue) + " · " + Math.round(glide.liveValue) + " ms"
+                            hint: Strings.t("glideHint")
+
+                            PanelSlider {
+                                id: glide
+                                bar: root.bar
+                                width: parent.width
+                                minimum: 80
+                                maximum: 900
+                                step: 20
+                                integer: true
+                                value: root.duration
+                                onReleased: function (v) { root.writeSettings({duration: Math.round(v / 10) * 10}) }
+                            }
+                        }
+
+                        Text {
+                            width: parent.width
+                            topPadding: Style.space(2)
+                            text: Strings.t("footer")
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                        }
                     }
                 }
 
-                SliderRow {
-                    width: parent.width
-                    title: Strings.t("glide").toUpperCase()
-                    valueText: root.glideLabel(glide.liveValue) + " · " + Math.round(glide.liveValue) + " ms"
-                    hint: Strings.t("glideHint")
+                Component {
+                    id: dragPage
+                    Column {
+                        width: page.width
+                        spacing: Style.space(12)
 
-                    PanelSlider {
-                        id: glide
-                        bar: root.bar
-                        width: parent.width
-                        minimum: 80
-                        maximum: 900
-                        step: 20
-                        integer: true
-                        value: root.duration
-                        onReleased: function (v) { root.writeSettings({duration: Math.round(v / 10) * 10}) }
+                        Toggle {
+                            width: parent.width
+                            label: Strings.t("dragEnable")
+                            description: Strings.t("dragEnableHint")
+                            checked: root.dragEnabled
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: root.writeSettings({drag_scroll: !root.dragEnabled})
+                        }
+
+                        SliderRow {
+                            width: parent.width
+                            dimmed: false
+                            title: Strings.t("curve").toUpperCase()
+                            valueText: ""
+                            hint: Strings.t("curveHint")
+
+                            ButtonGroup {
+                                width: parent.width
+                                focusable: false
+                                options: [
+                                    { value: "expo", label: Strings.t("curveExpo") },
+                                    { value: "linear", label: Strings.t("curveLinear") },
+                                    { value: "smooth", label: Strings.t("curveSmooth") }
+                                ]
+                                value: root.curve
+                                onChanged: function (value) { root.writeSettings({curve: value}) }
+                            }
+                        }
+
+                        Toggle {
+                            width: parent.width
+                            label: Strings.t("axisLock")
+                            description: Strings.t("axisLockHint")
+                            checked: root.axisLock
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: root.writeSettings({axis_lock: !root.axisLock})
+                        }
+
+                        Toggle {
+                            width: parent.width
+                            label: Strings.t("clickSuppress")
+                            description: Strings.t("clickSuppressHint")
+                            checked: root.clickSuppress
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: root.writeSettings({drag_click_suppress: !root.clickSuppress})
+                        }
+
+                        SliderRow {
+                            width: parent.width
+                            dimmed: false
+                            title: Strings.t("dragButton").toUpperCase()
+                            valueText: ""
+                            hint: Strings.t("dragButtonHint")
+
+                            ButtonGroup {
+                                width: parent.width
+                                focusable: false
+                                options: [
+                                    { value: "left", label: Strings.t("btnLeft") },
+                                    { value: "middle", label: Strings.t("btnMiddle") },
+                                    { value: "right", label: Strings.t("btnRight") }
+                                ]
+                                value: root.dragButton
+                                onChanged: function (value) { root.writeSettings({drag_button: value}) }
+                            }
+                        }
+
+                        SliderRow {
+                            width: parent.width
+                            dimmed: false
+                            title: Strings.t("dragDirection").toUpperCase()
+                            valueText: ""
+                            hint: Strings.t("dragDirectionHint")
+
+                            ButtonGroup {
+                                width: parent.width
+                                focusable: false
+                                options: [
+                                    { value: "mobile", label: Strings.t("dirMobile") },
+                                    { value: "laptop", label: Strings.t("dirLaptop") }
+                                ]
+                                value: root.dragDirection
+                                onChanged: function (value) { root.writeSettings({drag_direction: value}) }
+                            }
+                        }
+
+                        SliderRow {
+                            width: parent.width
+                            dimmed: false
+                            title: Strings.t("dragSpeed").toUpperCase()
+                            valueText: Math.round(speed.liveValue) + "%"
+                            hint: Strings.t("dragSpeedHint")
+
+                            PanelSlider {
+                                id: speed
+                                bar: root.bar
+                                width: parent.width
+                                minimum: 0
+                                maximum: 100
+                                step: 5
+                                integer: true
+                                value: root.dragSpeed
+                                onReleased: function (v) { root.writeSettings({drag_speed: Math.round(v)}) }
+                            }
+                        }
+
+                        Toggle {
+                            width: parent.width
+                            label: Strings.t("dragFling")
+                            description: Strings.t("dragFlingHint")
+                            checked: root.dragFling
+                            foreground: root.foreground
+                            fontFamily: root.fontFamily
+                            onClicked: root.writeSettings({drag_fling: !root.dragFling})
+                        }
+
+                        SliderRow {
+                            width: parent.width
+                            dimmed: !root.dragFling
+                            title: Strings.t("dragCoast").toUpperCase()
+                            valueText: root.dragFling ? Math.round(coast.liveValue) + " ms" : ""
+                            hint: Strings.t("dragCoastHint")
+
+                            PanelSlider {
+                                id: coast
+                                bar: root.bar
+                                width: parent.width
+                                minimum: 150
+                                maximum: 900
+                                step: 10
+                                integer: true
+                                value: root.dragCoast
+                                onReleased: function (v) { root.writeSettings({drag_fling_tau: Math.round(v)}) }
+                            }
+                        }
+
+                        Text {
+                            width: parent.width
+                            topPadding: Style.space(2)
+                            text: Strings.t("dragFooter")
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                        }
                     }
-                }
-
-                Text {
-                    width: parent.width
-                    topPadding: Style.space(2)
-                    text: Strings.t("footer")
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.caption
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
                 }
             }
         }
@@ -226,9 +454,12 @@ Panel {
         property string title: ""
         property string valueText: ""
         property string hint: ""
+        // Rows grey out when the feature they drive is off. Drag rows pass
+        // dimmed: false, since the wheel toggle says nothing about them.
+        property bool dimmed: !root.enabled
         default property alias content: slot.data
         spacing: Style.space(6)
-        opacity: root.enabled ? 1.0 : 0.5
+        opacity: dimmed ? 0.5 : 1.0
         Behavior on opacity { NumberAnimation { duration: 120 } }
 
         Item {
