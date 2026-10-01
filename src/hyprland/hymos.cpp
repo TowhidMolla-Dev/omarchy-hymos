@@ -1046,6 +1046,32 @@ namespace {
             g_config.enabled = sub == "on" || (sub == "toggle" && !g_config.enabled);
             return g_config.enabled ? "enabled\n" : "disabled\n";
         }
+        // Every profile, one per line: glob then each key it sets, so the panel
+        // can render the list without parsing the file itself.
+        if (sub == "profiles") {
+            // Always emit a header line. An empty response is reported by
+            // Hyprland as "unknown request", which makes a working command look
+            // broken, and it also lets the panel show the count.
+            std::string out = "# " + std::to_string(g_profiles.size()) + "\n";
+            for (const auto& pr : g_profiles) {
+                out += pr.glob;
+                if (pr.enabled)
+                    out += "\tenabled=" + std::string{*pr.enabled ? "1" : "0"};
+                if (pr.step)
+                    out += "\tstep=" + std::to_string(*pr.step);
+                if (pr.durationMs)
+                    out += "\tduration=" + std::to_string(*pr.durationMs);
+                if (pr.dragRatio)
+                    out += "\tdrag_ratio=" + std::to_string(*pr.dragRatio);
+                if (pr.dragScroll)
+                    out += "\tdrag_scroll=" + std::string{*pr.dragScroll ? "1" : "0"};
+                if (pr.curve)
+                    out += "\tcurve=" + std::string{*pr.curve == SConfig::ECurve::EXPO ? "expo" : *pr.curve == SConfig::ECurve::LINEAR ? "linear" : "smooth"};
+                out += "\n";
+            }
+            return out;
+        }
+
         // Which profile the window under the cursor resolves to, and what it
         // changes. Without this there is no way to tell a typo in the glob from
         // a profile that simply is not matching.
@@ -1148,7 +1174,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_moveListener    = Event::bus()->m_events.input.mouse.move.listen([](Vector2D d, Event::SCallbackInfo& info) { onMove(d, info); });
     g_ctlCommand      = HyprlandAPI::registerHyprCtlCommand(PHANDLE, SHyprCtlCommand{.name = "hymos", .exact = false, .fn = ctl});
 
-    return {"hymos", "Mos-style smooth scrolling for mouse wheels, plus phone-like grab-and-drag", "TowhidMolla-Dev", "1.4.0"};
+    return {"hymos", "Mos-style smooth scrolling for mouse wheels, plus phone-like grab-and-drag", "TowhidMolla-Dev", "1.5.0"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {

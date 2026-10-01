@@ -37,6 +37,137 @@ Panel {
     // deliberately stays out of the settings store.
     property string tab: "wheel"
 
+    // ---- per-app profiles -------------------------------------------------
+    // Profiles live in ~/.config/hypr/hymos-profiles.conf and are edited through
+    // hymos-profiles.sh rather than straight from QML: the file has to keep its
+    // comments and section order, and the plugin is what validates the values.
+    // The plugin owns matching, so the panel only ever shows what it reports.
+    property var profileRows: []
+    property string profileWindow: ""
+    property string profileError: ""
+
+    function profileExists(glob) {
+        return profileRows.some(function (r) { return r.glob === glob; });
+    }
+
+    function parseProfiles(text) {
+        var rows = [];
+        String(text).split("\n").forEach(function (line) {
+            if (line.trim() === "") return;
+            // The first line is a "# <count>" header, not a profile.
+            if (line.charAt(0) === "#") return;
+            var parts = line.split("\t");
+            var row = { glob: parts[0], step: null, duration: null, dragRatio: null,
+                        dragScroll: null, curve: "", enabled: null };
+            parts.slice(1).forEach(function (kv) {
+                var eq = kv.indexOf("=");
+                if (eq < 0) return;
+                var k = kv.slice(0, eq), v = kv.slice(eq + 1);
+                if (k === "step") row.step = parseFloat(v);
+                else if (k === "duration") row.duration = parseFloat(v);
+                else if (k === "drag_ratio") row.dragRatio = parseFloat(v);
+                else if (k === "drag_scroll") row.dragScroll = (v === "1");
+                else if (k === "enabled") row.enabled = (v === "1");
+                else if (k === "curve") row.curve = v;
+            });
+            rows.push(row);
+        });
+        return rows;
+    }
+
+    function refreshProfiles() {
+        listProfilesProc.running = true;
+        windowProc.running = true;
+    }
+
+    // "Add for this window" is only useful if it follows the cursor. Reading the
+    // class on a timer while the panel is open costs one cheap hyprctl call a
+    // second and keeps the button pointed at the window actually under it.
+    Timer {
+        interval: 1000
+        running: root.opened && root.tab === "profiles"
+        repeat: true
+        onTriggered: if (!windowProc.running) windowProc.running = true
+    }
+
+    // Every edit goes: write the file, tell the plugin to reread it, then read
+    // the list back. Reading back rather than patching local state means the
+    // panel can never show something the plugin disagrees with.
+    //
+    // One edit at a time. A click during an edit replaces the queued one rather
+    // than queueing several: they are all "set this field", so the last wins and
+    // the intermediate states are not worth a process each.
+    function profileEdit(args) {
+        if (profileEditProc.running) { profileEditQueue = args; return; }
+        runProfileEdit(args);
+    }
+
+    function runProfileEdit(args) {
+        profileEditProc.command = ["bash", localPath("hymos-profiles.sh")].concat(args);
+        profileEditProc.running = true;
+    }
+
+    property var profileEditQueue: []
+
+    function setProfileField(row, key, value) {
+        if (value === null) profileEdit(["unset", row.glob, key]);
+        else profileEdit(["set", row.glob, key, String(value)]);
+    }
+
+    Process {
+        id: profileEditProc
+        onExited: function (code) {
+            // Reread the file either way, so the list always shows what is
+            // really in it rather than what we hoped the edit did.
+            reloadProc.running = true;
+            listProfilesProc.running = true;
+
+            if (profileEditQueue.length > 0) {
+                // Report the failure of the edit that just finished, but let the
+                // queued edit's own result decide the final message.
+                root.profileError = code === 0 ? "" : (profileEditErr.text.trim() || ("exit " + code));
+                var next = profileEditQueue;
+                profileEditQueue = [];
+                runProfileEdit(next);
+                return;
+            }
+            // Last edit of the burst: its result is the one that stands.
+            root.profileError = code === 0 ? "" : (profileEditErr.text.trim() || ("exit " + code));
+        }
+        stdout: StdioCollector { id: profileEditOut }
+        stderr: StdioCollector { id: profileEditErr }
+    }
+
+    Process {
+        id: reloadProc
+        command: ["hyprctl", "hymos", "reload"]
+        running: false
+    }
+
+    Process {
+        id: listProfilesProc
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: root.profileRows = root.parseProfiles(text)
+        }
+    }
+
+    Process {
+        id: windowProc
+        command: ["hyprctl", "hymos", "profile"]
+        stdout: StdioCollector {
+            waitForEnd: true
+            onStreamFinished: {
+                // The class line is the one after "window:"; anything else in
+                // the report (matched, effective) is about the cursor's window
+                // rather than this query.
+                var m = String(text).match(/^window:\s*(.+)$/m);
+                root.profileWindow = m ? m[1].trim() : "";
+                if (root.profileWindow === "<none>") root.profileWindow = "";
+            }
+        }
+    }
+
     function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)) }
 
     readonly property color  foreground: bar ? bar.foreground : Color.foreground
@@ -117,6 +248,7 @@ Panel {
     }
 
     onOpenedChanged: if (opened) Qt.callLater(function () { keyCatcher.forceActiveFocus() })
+    onTabChanged: if (tab === "profiles") refreshProfiles()
 
     implicitWidth: button.implicitWidth
     implicitHeight: button.implicitHeight
@@ -166,6 +298,7 @@ Panel {
             // ←/→ nudge the horizontal knob, ↑/↓ the vertical one, for
             // whichever page is showing so the keys never edit a hidden tab.
             onMoveRequested: function (dx, dy) {
+                if (root.tab === "profiles") return; // nothing to nudge here
                 if (root.tab === "drag") {
                     if (dx !== 0) root.writeSettings({drag_speed: root.clamp(root.dragSpeed + dx * 5, 0, 100)});
                     if (dy !== 0) root.writeSettings({drag_fling_tau: root.clamp(root.dragCoast - dy * 10, 150, 900)});
@@ -222,7 +355,8 @@ Panel {
                     focusable: false
                     options: [
                         { value: "wheel", label: Strings.t("tabWheel") },
-                        { value: "drag", label: Strings.t("tabDrag") }
+                        { value: "drag", label: Strings.t("tabDrag") },
+                        { value: "profiles", label: Strings.t("tabProfiles") }
                     ]
                     value: root.tab
                     onChanged: function (value) { root.tab = value }
@@ -257,9 +391,16 @@ Panel {
                     // Only take wheel events when there is something below the
                     // fold; otherwise a short page swallows the scroll.
                     interactive: contentHeight > height
-                    // Switching tabs must not leave the next page scrolled.
-                    onContentHeightChanged: if (contentY > maximumY) contentY = 0
-                    onHeightChanged: if (contentY > maximumY) contentY = 0
+                    // How far down the page can go. Flickable has originY but no
+                    // maximumY, so this is derived: without it the clamps below
+                    // were reading an undefined property.
+                    readonly property real maxScrollY: Math.max(0, contentHeight - height)
+                    // Switching tabs must not leave the next page scrolled, and a
+                    // card collapsing under the cursor must not strand the view
+                    // past the new bottom.
+                    onContentHeightChanged: if (contentY > maxScrollY) contentY = 0
+                    onHeightChanged: if (contentY > maxScrollY) contentY = 0
+                    onWidthChanged: contentX = 0
 
                     // Ceiling is min(the panel's own cap, the screen's room) minus
                     // the inset and the chrome above. Using the panel's cap as well
@@ -272,7 +413,11 @@ Panel {
                     Loader {
                         id: page
                         width: pageScroll.width
-                        sourceComponent: root.tab === "drag" ? dragPage : wheelPage
+                        sourceComponent: {
+                            if (root.tab === "drag") return dragPage;
+                            if (root.tab === "profiles") return profilesPage;
+                            return wheelPage;
+                        }
                     }
                 }
 
@@ -489,6 +634,334 @@ Panel {
                             wrapMode: Text.WordWrap
                         }
                     }
+// Per-app profiles. Each card is one [profile <glob>] section in
+                // hymos-profiles.conf. A control left on "inherit" writes no key
+                // at all, which is what lets the global value come back through.
+                Component {
+                    id: profilesPage
+                    Column {
+                        width: pageScroll.width
+                        spacing: Style.space(12)
+
+                        Item {
+                            width: parent.width
+                            implicitHeight: cursorHeader.implicitHeight
+
+                            PanelSectionHeader {
+                                id: cursorHeader
+                                anchors.left: parent.left
+                                anchors.right: addHere.left
+                                anchors.rightMargin: Style.space(8)
+                                text: Strings.t("profilesUnderCursor")
+                                foreground: root.foreground
+                                fontFamily: root.fontFamily
+                            }
+
+                            Button {
+                                id: addHere
+                                anchors.right: parent.right
+                                anchors.verticalCenter: cursorHeader.verticalCenter
+                                enabled: root.profileWindow !== "" && !root.profileExists(root.profileWindow)
+                                text: root.profileExists(root.profileWindow)
+                                      ? Strings.t("profilesExists")
+                                      : Strings.t("profilesAddHere")
+                                focusable: false
+                                fontFamily: root.fontFamily
+                                fontSize: Style.font.caption
+                                onClicked: root.profileEdit(["add", root.profileWindow])
+                            }
+                        }
+
+                        Text {
+                            width: parent.width
+                            visible: root.profileWindow === ""
+                            textFormat: Text.PlainText
+                            text: Strings.t("profilesNone")
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Text {
+                            width: parent.width
+                            visible: root.profileRows.length === 0
+                            textFormat: Text.PlainText
+                            text: Strings.t("profilesEmpty") + "\n" + Strings.t("profilesEmptyHint")
+                            color: root.dim
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            horizontalAlignment: Text.AlignHCenter
+                            wrapMode: Text.WordWrap
+                        }
+
+                        Repeater {
+                            id: profileRepeater
+                            model: root.profileRows
+
+                            delegate: Rectangle {
+                                id: profileCard
+                                required property var modelData
+                                required property int index
+
+                                readonly property var row: modelData
+                                property bool expanded: index === 0
+
+                                // Knobs show the profile's value when it has one, and the
+                                // global value otherwise, so a slider always sits at the
+                                // value actually in force.
+                                readonly property real stepValue: row.step === null ? root.step : row.step
+                                readonly property real durationValue: row.duration === null ? root.duration : row.duration
+
+                                // "inherit" for the keys the profile does not set.
+                                readonly property string summary: {
+                                    var bits = [];
+                                    bits.push(row.enabled === null ? Strings.t("profilesInherit")
+                                                               : (row.enabled ? Strings.t("profilesSummaryOn") : Strings.t("profilesSummaryOff")));
+                                    if (row.step !== null) bits.push(Strings.t("intensity") + " " + Math.round(row.step));
+                                    if (row.duration !== null) bits.push(Strings.t("glide") + " " + Math.round(row.duration) + "ms");
+                                    if (row.curve !== "") bits.push(row.curve);
+                                    if (row.dragScroll !== null)
+                                        bits.push(Strings.t("dragEnable") + ": " + (row.dragScroll ? Strings.t("profilesSummaryOn") : Strings.t("profilesSummaryOff")));
+                                    return bits.join("  ·  ");
+                                }
+
+                                width: pageScroll.width
+                                implicitHeight: cardColumn.implicitHeight + Style.space(20)
+                                radius: Style.cornerRadius > 0 ? Style.cornerRadius : 0
+                                color: Style.selectedFillFor(root.foreground, Color.accent)
+                                border.width: 1
+                                border.color: root.dim
+
+                                Column {
+                                    id: cardColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: Style.space(10)
+                                    spacing: Style.space(8)
+
+                                    Item {
+                                        width: parent.width
+                                        implicitHeight: nameRow.implicitHeight
+
+                                        PanelSectionHeader {
+                                            id: nameRow
+                                            anchors.left: parent.left
+                                            anchors.right: profileActions.left
+                                            anchors.rightMargin: Style.space(8)
+                                            text: profileCard.row.glob
+                                            foreground: root.foreground
+                                            fontFamily: root.fontFamily
+                                        }
+
+                                        Row {
+                                            id: profileActions
+                                            anchors.right: parent.right
+                                            anchors.verticalCenter: nameRow.verticalCenter
+                                            spacing: Style.space(4)
+
+                                            PanelActionButton {
+                                                iconText: profileCard.expanded ? "-" : "+"
+                                                tooltipText: profileCard.expanded ? Strings.t("profilesCollapse") : Strings.t("profilesExpand")
+                                                size: Style.space(20)
+                                                fontSize: Style.font.caption
+                                                foreground: root.foreground
+                                                onClicked: profileCard.expanded = !profileCard.expanded
+                                            }
+
+                                            PanelActionButton {
+                                                iconText: "\u2715"
+                                                tooltipText: Strings.t("profilesRemove")
+                                                size: Style.space(20)
+                                                fontSize: Style.font.caption
+                                                foreground: root.foreground
+                                                onClicked: root.profileEdit(["remove", profileCard.row.glob])
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        width: parent.width
+                                        visible: !profileCard.expanded
+                                        textFormat: Text.PlainText
+                                        text: profileCard.summary
+                                        color: root.dim
+                                        font.family: root.fontFamily
+                                        font.pixelSize: Style.font.caption
+                                        elide: Text.ElideRight
+                                        wrapMode: Text.WordWrap
+                                    }
+
+                                    Column {
+                                        width: parent.width
+                                        visible: profileCard.expanded
+                                        spacing: Style.space(12)
+
+                                        // Smooth scrolling for this app: inherit / on / off.
+                                        // Three states, so a row of buttons rather than a
+                                        // switch: a switch cannot express "inherit".
+                                        Column {
+                                            width: parent.width
+                                            spacing: Style.space(6)
+
+                                            PanelSectionHeader {
+                                                width: parent.width
+                                                text: Strings.t("profilesOn")
+                                                foreground: root.foreground
+                                                fontFamily: root.fontFamily
+                                            }
+
+                                            ButtonGroup {
+                                                width: parent.width
+                                                focusable: false
+                                                options: [
+                                                    { value: "inherit", label: Strings.t("profilesInherit") },
+                                                    { value: "on", label: Strings.t("profilesSummaryOn") },
+                                                    { value: "off", label: Strings.t("profilesSummaryOff") }
+                                                ]
+                                                value: profileCard.row.enabled === null ? "inherit"
+                                                        : (profileCard.row.enabled ? "on" : "off")
+                                                onChanged: function (v) {
+                                                    root.setProfileField(profileCard.row, "enabled",
+                                                        v === "inherit" ? null : (v === "on" ? 1 : 0));
+                                                }
+                                            }
+                                        }
+
+                                        // Step. Releasing the knob on the global value writes
+                                        // nothing, so a profile cannot accidentally freeze the
+                                        // global setting in place.
+                                        SliderRow {
+                                            width: parent.width
+                                            dimmed: false
+                                            title: Strings.t("intensity")
+                                            hint: profileCard.row.step === null ? Strings.t("profilesInheritHint") : ""
+                                            valueText: profileCard.row.step === null
+                                                       ? Strings.t("profilesInherit")
+                                                       : String(Math.round(profileCard.row.step))
+                                            PanelSlider {
+                                                bar: root.bar
+                                                width: parent.width
+                                                minimum: 1
+                                                maximum: 12
+                                                step: 1
+                                                integer: true
+                                                value: profileCard.stepValue
+                                                onReleased: function (v) {
+                                                    root.setProfileField(profileCard.row, "step",
+                                                        Math.round(v) === Math.round(root.step) ? null : Math.round(v));
+                                                }
+                                            }
+                                        }
+
+                                        SliderRow {
+                                            width: parent.width
+                                            dimmed: false
+                                            title: Strings.t("glide")
+                                            hint: profileCard.row.duration === null ? Strings.t("profilesInheritHint") : ""
+                                            valueText: profileCard.row.duration === null
+                                                       ? Strings.t("profilesInherit")
+                                                       : String(Math.round(profileCard.row.duration))
+                                            PanelSlider {
+                                                bar: root.bar
+                                                width: parent.width
+                                                minimum: 80
+                                                maximum: 900
+                                                step: 10
+                                                integer: true
+                                                value: profileCard.durationValue
+                                                onReleased: function (v) {
+                                                    root.setProfileField(profileCard.row, "duration",
+                                                        Math.round(v) === Math.round(root.duration) ? null : Math.round(v));
+                                                }
+                                            }
+                                        }
+
+                                        // Curve: the three shapes, plus inherit.
+                                        Column {
+                                            width: parent.width
+                                            spacing: Style.space(6)
+
+                                            PanelSectionHeader {
+                                                width: parent.width
+                                                text: Strings.t("curve")
+                                                foreground: root.foreground
+                                                fontFamily: root.fontFamily
+                                            }
+
+                                            ButtonGroup {
+                                                width: parent.width
+                                                focusable: false
+                                                options: [
+                                                    { value: "inherit", label: Strings.t("profilesInherit") },
+                                                    { value: "expo", label: Strings.t("curveExpo") },
+                                                    { value: "linear", label: Strings.t("curveLinear") },
+                                                    { value: "smooth", label: Strings.t("curveSmooth") }
+                                                ]
+                                                value: profileCard.row.curve === "" ? "inherit" : profileCard.row.curve
+                                                onChanged: function (v) {
+                                                    root.setProfileField(profileCard.row, "curve", v === "inherit" ? null : v);
+                                                }
+                                            }
+                                        }
+
+                                        // Drag-to-scroll for this app.
+                                        Column {
+                                            width: parent.width
+                                            spacing: Style.space(6)
+
+                                            PanelSectionHeader {
+                                                width: parent.width
+                                                text: Strings.t("dragEnable")
+                                                foreground: root.foreground
+                                                fontFamily: root.fontFamily
+                                            }
+
+                                            ButtonGroup {
+                                                width: parent.width
+                                                focusable: false
+                                                options: [
+                                                    { value: "inherit", label: Strings.t("profilesInherit") },
+                                                    { value: "on", label: Strings.t("profilesSummaryOn") },
+                                                    { value: "off", label: Strings.t("profilesSummaryOff") }
+                                                ]
+                                                value: profileCard.row.dragScroll === null ? "inherit"
+                                                        : (profileCard.row.dragScroll ? "on" : "off")
+                                                onChanged: function (v) {
+                                                    root.setProfileField(profileCard.row, "drag_scroll",
+                                                        v === "inherit" ? null : (v === "on" ? 1 : 0));
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            width: parent.width
+                                            visible: profileCard.row.enabled === false
+                                            textFormat: Text.PlainText
+                                            text: Strings.t("profilesDisabledHint")
+                                            color: root.dim
+                                            font.family: root.fontFamily
+                                            font.pixelSize: Style.font.caption
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            width: parent.width
+                            visible: root.profileError !== ""
+                            textFormat: Text.PlainText
+                            text: root.profileError
+                            color: Color.urgent
+                            font.family: root.fontFamily
+                            font.pixelSize: Style.font.caption
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
                 }
             }
         }

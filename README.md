@@ -111,6 +111,9 @@ omarchy bar move diogocezar.hymos --section left     # or center, right
 
 Changes apply as soon as you let go of a slider.
 
+The panel has three tabs. **Wheel** and **Drag** hold the global settings, and
+**Apps** holds the per-application profiles described below.
+
 | Shortcut | What it does |
 |---|---|
 | **Middle-click** the icon | Smooth scrolling on / off, without opening the panel |
@@ -223,11 +226,53 @@ enabled = 0
 drag_scroll = 0
 ```
 
+#### In the panel
+
+Open the **Apps** tab and move the cursor over the window you want to change.
+The header shows the class under the cursor, and **Add for this window**
+creates a profile for it. Each profile is a card: press `+` to expand it and
+`-` to collapse it, and `×` to delete it.
+
+Inside a card you can set smooth scrolling, intensity, glide, curve and
+drag-to-scroll for that app. Every one of them has an **Inherit** option, which
+writes no key at all, so the global setting applies to that field. Setting a
+slider back to the global value also clears the override, which is why moving a
+slider that happens to sit on the global number does not freeze it.
+
+The card shows a summary line while collapsed, so you can see at a glance which
+apps differ and how.
+
+#### By hand
+
 The glob is matched against the window class, with `*` for any run of
 characters, `?` for one, and `[abc]` / `[a-z]` for a set. With the cursor over
 a window, `hyprctl hymos profile` reports which one matched and what it
-resolved to, so a typo in the glob is easy to spot. Profiles live in their own
+resolved to, and `hyprctl hymos profiles` lists every profile and the keys each
+one sets. So a typo in the glob is easy to spot. Profiles live in their own
 file because the widget rewrites `hymos.conf` in place.
+
+Editing the file by hand works, but the panel goes through
+`src/hymos-profiles.sh`, which rewrites the file while keeping your comments
+and section order intact:
+
+```bash
+# what is there now
+hymos-profiles.sh list
+
+# add a profile, then set fields on it
+hymos-profiles.sh add '*firefox*'
+hymos-profiles.sh set '*firefox*' step 4
+hymos-profiles.sh set '*firefox*' duration 300
+
+# drop one field, so the global value applies again
+hymos-profiles.sh unset '*firefox*' step
+
+# delete the whole profile
+hymos-profiles.sh remove '*firefox*'
+```
+
+The script refuses values outside the documented range before writing, and it
+never rewrites the file when the value is rejected.
 
 ### Scroll curve
 
