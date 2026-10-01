@@ -633,8 +633,11 @@ Panel {
                             horizontalAlignment: Text.AlignHCenter
                             wrapMode: Text.WordWrap
                         }
+
                     }
-// Per-app profiles. Each card is one [profile <glob>] section in
+                }
+
+                // Per-app profiles. Each card is one [profile <glob>] section in
                 // hymos-profiles.conf. A control left on "inherit" writes no key
                 // at all, which is what lets the global value come back through.
                 Component {
@@ -961,7 +964,6 @@ Panel {
                             wrapMode: Text.WordWrap
                         }
                     }
-                }
                 }
             }
         }
